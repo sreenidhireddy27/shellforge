@@ -2,10 +2,21 @@
 
 int main(void)
 {
-    printf("=====================================\n");
-    printf("          Welcome to SHELLFORGE      \n");
-    printf("     A Bash-like Shell written in C  \n");
-    printf("=====================================\n");
+    printf("ShellForge started!\n");
+
+    while (1)
+    {
+        char command[100];
+
+        printf("shellforge> ");
+
+        if (fgets(command, sizeof(command), stdin) == NULL)
+        {
+            break;
+        }
+
+        printf("You entered: %s", command);
+    }
 
     return 0;
 }
