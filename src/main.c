@@ -4,11 +4,27 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
 #define MAX_TOKENS 64
 #define DELIMITERS " \t\r\n\a"
+
+// Global tracking for currently active child process
+static pid_t foreground_pid = -1;
+
+// Signal handler for SIGINT (Ctrl+C)
+void handle_sigint(int sig) {
+    (void)sig;
+    if (foreground_pid > 0) {
+        // Forward SIGINT to active child process
+        kill(foreground_pid, SIGINT);
+    } else {
+        // No child running; write newline and redraw prompt safely
+        write(STDOUT_FILENO, "\nshellforge> ", 13);
+    }
+}
 
 // Tokenize input string into an argument vector
 char **tokenize(char *line) {
@@ -96,7 +112,8 @@ int execute_pipeline(char **args1, char **args2) {
 
     pid_t pid1 = fork();
     if (pid1 == 0) {
-        // First child: redirect STDOUT to pipe write end
+        // Child resets SIGINT to default
+        signal(SIGINT, SIG_DFL);
         close(pipefd[0]);
         dup2(pipefd[1], STDOUT_FILENO);
         close(pipefd[1]);
@@ -109,7 +126,8 @@ int execute_pipeline(char **args1, char **args2) {
 
     pid_t pid2 = fork();
     if (pid2 == 0) {
-        // Second child: redirect STDIN to pipe read end
+        // Child resets SIGINT to default
+        signal(SIGINT, SIG_DFL);
         close(pipefd[1]);
         dup2(pipefd[0], STDIN_FILENO);
         close(pipefd[0]);
@@ -120,7 +138,6 @@ int execute_pipeline(char **args1, char **args2) {
         exit(EXIT_FAILURE);
     }
 
-    // Parent closes pipe ends and waits for both children
     close(pipefd[0]);
     close(pipefd[1]);
     waitpid(pid1, NULL, 0);
@@ -129,7 +146,7 @@ int execute_pipeline(char **args1, char **args2) {
     return 1;
 }
 
-// Spawns a single child process for external commands
+// Execute external binary with foreground pid tracking
 int execute_external(char **args) {
     pid_t pid = fork();
 
@@ -137,25 +154,28 @@ int execute_external(char **args) {
         perror("fork failed");
         return 1;
     } else if (pid == 0) {
+        // Child restores default SIGINT action so it can be terminated by Ctrl+C
+        signal(SIGINT, SIG_DFL);
         handle_redirection(args);
         if (execvp(args[0], args) == -1) {
             perror("shellforge");
         }
         exit(EXIT_FAILURE);
     } else {
+        foreground_pid = pid;
         int status;
         waitpid(pid, &status, 0);
+        foreground_pid = -1;
     }
     return 1;
 }
 
-// Route commands: check built-ins, pipes, or single command
+// Command dispatcher
 int execute_command(char **args) {
     if (strcmp(args[0], "cd") == 0) {
         return shellforge_cd(args);
     }
 
-    // Check for pipe '|'
     for (int i = 0; args[i] != NULL; i++) {
         if (strcmp(args[i], "|") == 0) {
             args[i] = NULL;
@@ -168,6 +188,14 @@ int execute_command(char **args) {
 }
 
 int main(void) {
+    // Configure sigaction for SIGINT
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_sigint;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    sigaction(SIGINT, &sa, NULL);
+
     char *line = NULL;
     size_t len = 0;
     ssize_t read_bytes;
