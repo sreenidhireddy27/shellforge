@@ -14,7 +14,6 @@
 
 static pid_t foreground_pid = -1;
 
-// Signal handler for SIGINT (Ctrl+C)
 void handle_sigint(int sig) {
     (void)sig;
     if (foreground_pid > 0) {
@@ -24,21 +23,16 @@ void handle_sigint(int sig) {
     }
 }
 
-// Signal handler for SIGCHLD: Reaps terminated background child processes
 void handle_sigchld(int sig) {
     (void)sig;
     int saved_errno = errno;
     pid_t pid;
     int status;
-
-    // Reap all terminated children non-blockingly
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        // Child process reaped
     }
     errno = saved_errno;
 }
 
-// Tokenize input string into an argument vector
 char **tokenize(char *line) {
     char **tokens = malloc(MAX_TOKENS * sizeof(char *));
     if (!tokens) {
@@ -60,7 +54,21 @@ char **tokenize(char *line) {
     return tokens;
 }
 
-// Built-in cd implementation
+// Expands tokens starting with '$' using getenv()
+void expand_variables(char **args) {
+    for (int i = 0; args[i] != NULL; i++) {
+        if (args[i][0] == '$' && args[i][1] != '\0') {
+            char *var_name = &args[i][1];
+            char *val = getenv(var_name);
+            if (val != NULL) {
+                args[i] = val;
+            } else {
+                args[i] = "";
+            }
+        }
+    }
+}
+
 int shellforge_cd(char **args) {
     if (args[1] == NULL) {
         char *home = getenv("HOME");
@@ -79,7 +87,6 @@ int shellforge_cd(char **args) {
     return 1;
 }
 
-// Apply I/O redirection (< and >) on an argument array
 void handle_redirection(char **args) {
     for (int i = 0; args[i] != NULL; i++) {
         if (strcmp(args[i], ">") == 0) {
@@ -114,7 +121,6 @@ void handle_redirection(char **args) {
     }
 }
 
-// Execute piped commands: args1 | args2
 int execute_pipeline(char **args1, char **args2) {
     int pipefd[2];
     if (pipe(pipefd) == -1) {
@@ -156,7 +162,6 @@ int execute_pipeline(char **args1, char **args2) {
     return 1;
 }
 
-// Spawns external binary, supporting background execution (&)
 int execute_external(char **args, int in_background) {
     pid_t pid = fork();
 
@@ -183,13 +188,13 @@ int execute_external(char **args, int in_background) {
     return 1;
 }
 
-// Command dispatcher
 int execute_command(char **args) {
+    expand_variables(args);
+
     if (strcmp(args[0], "cd") == 0) {
         return shellforge_cd(args);
     }
 
-    // Check for pipeline '|'
     for (int i = 0; args[i] != NULL; i++) {
         if (strcmp(args[i], "|") == 0) {
             args[i] = NULL;
@@ -198,7 +203,6 @@ int execute_command(char **args) {
         }
     }
 
-    // Check for background operator '&' at the end
     int in_background = 0;
     int last_idx = 0;
     while (args[last_idx] != NULL) {
@@ -213,7 +217,6 @@ int execute_command(char **args) {
 }
 
 int main(void) {
-    // Configure SIGINT
     struct sigaction sa_int;
     memset(&sa_int, 0, sizeof(sa_int));
     sa_int.sa_handler = handle_sigint;
@@ -221,7 +224,6 @@ int main(void) {
     sa_int.sa_flags = SA_RESTART;
     sigaction(SIGINT, &sa_int, NULL);
 
-    // Configure SIGCHLD to reap background processes
     struct sigaction sa_chld;
     memset(&sa_chld, 0, sizeof(sa_chld));
     sa_chld.sa_handler = handle_sigchld;
