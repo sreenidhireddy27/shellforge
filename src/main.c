@@ -5,25 +5,37 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <errno.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
 #define MAX_TOKENS 64
 #define DELIMITERS " \t\r\n\a"
 
-// Global tracking for currently active child process
 static pid_t foreground_pid = -1;
 
 // Signal handler for SIGINT (Ctrl+C)
 void handle_sigint(int sig) {
     (void)sig;
     if (foreground_pid > 0) {
-        // Forward SIGINT to active child process
         kill(foreground_pid, SIGINT);
     } else {
-        // No child running; write newline and redraw prompt safely
         write(STDOUT_FILENO, "\nshellforge> ", 13);
     }
+}
+
+// Signal handler for SIGCHLD: Reaps terminated background child processes
+void handle_sigchld(int sig) {
+    (void)sig;
+    int saved_errno = errno;
+    pid_t pid;
+    int status;
+
+    // Reap all terminated children non-blockingly
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        // Child process reaped
+    }
+    errno = saved_errno;
 }
 
 // Tokenize input string into an argument vector
@@ -112,7 +124,6 @@ int execute_pipeline(char **args1, char **args2) {
 
     pid_t pid1 = fork();
     if (pid1 == 0) {
-        // Child resets SIGINT to default
         signal(SIGINT, SIG_DFL);
         close(pipefd[0]);
         dup2(pipefd[1], STDOUT_FILENO);
@@ -126,7 +137,6 @@ int execute_pipeline(char **args1, char **args2) {
 
     pid_t pid2 = fork();
     if (pid2 == 0) {
-        // Child resets SIGINT to default
         signal(SIGINT, SIG_DFL);
         close(pipefd[1]);
         dup2(pipefd[0], STDIN_FILENO);
@@ -146,15 +156,14 @@ int execute_pipeline(char **args1, char **args2) {
     return 1;
 }
 
-// Execute external binary with foreground pid tracking
-int execute_external(char **args) {
+// Spawns external binary, supporting background execution (&)
+int execute_external(char **args, int in_background) {
     pid_t pid = fork();
 
     if (pid < 0) {
         perror("fork failed");
         return 1;
     } else if (pid == 0) {
-        // Child restores default SIGINT action so it can be terminated by Ctrl+C
         signal(SIGINT, SIG_DFL);
         handle_redirection(args);
         if (execvp(args[0], args) == -1) {
@@ -162,10 +171,14 @@ int execute_external(char **args) {
         }
         exit(EXIT_FAILURE);
     } else {
-        foreground_pid = pid;
-        int status;
-        waitpid(pid, &status, 0);
-        foreground_pid = -1;
+        if (in_background) {
+            printf("[Process running in background with PID %d]\n", pid);
+        } else {
+            foreground_pid = pid;
+            int status;
+            waitpid(pid, &status, 0);
+            foreground_pid = -1;
+        }
     }
     return 1;
 }
@@ -176,6 +189,7 @@ int execute_command(char **args) {
         return shellforge_cd(args);
     }
 
+    // Check for pipeline '|'
     for (int i = 0; args[i] != NULL; i++) {
         if (strcmp(args[i], "|") == 0) {
             args[i] = NULL;
@@ -184,17 +198,36 @@ int execute_command(char **args) {
         }
     }
 
-    return execute_external(args);
+    // Check for background operator '&' at the end
+    int in_background = 0;
+    int last_idx = 0;
+    while (args[last_idx] != NULL) {
+        last_idx++;
+    }
+    if (last_idx > 0 && strcmp(args[last_idx - 1], "&") == 0) {
+        in_background = 1;
+        args[last_idx - 1] = NULL;
+    }
+
+    return execute_external(args, in_background);
 }
 
 int main(void) {
-    // Configure sigaction for SIGINT
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = handle_sigint;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
-    sigaction(SIGINT, &sa, NULL);
+    // Configure SIGINT
+    struct sigaction sa_int;
+    memset(&sa_int, 0, sizeof(sa_int));
+    sa_int.sa_handler = handle_sigint;
+    sigemptyset(&sa_int.sa_mask);
+    sa_int.sa_flags = SA_RESTART;
+    sigaction(SIGINT, &sa_int, NULL);
+
+    // Configure SIGCHLD to reap background processes
+    struct sigaction sa_chld;
+    memset(&sa_chld, 0, sizeof(sa_chld));
+    sa_chld.sa_handler = handle_sigchld;
+    sigemptyset(&sa_chld.sa_mask);
+    sa_chld.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    sigaction(SIGCHLD, &sa_chld, NULL);
 
     char *line = NULL;
     size_t len = 0;
