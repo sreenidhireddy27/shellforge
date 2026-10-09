@@ -11,8 +11,39 @@
 
 #define MAX_TOKENS 64
 #define DELIMITERS " \t\r\n\a"
+#define MAX_HISTORY 100
 
 static pid_t foreground_pid = -1;
+
+// History state
+static char *history_entries[MAX_HISTORY];
+static int history_count = 0;
+
+void add_history_entry(const char *cmd) {
+    if (!cmd || strlen(cmd) == 0) return;
+    if (history_count < MAX_HISTORY) {
+        history_entries[history_count++] = strdup(cmd);
+    } else {
+        free(history_entries[0]);
+        for (int i = 1; i < MAX_HISTORY; i++) {
+            history_entries[i - 1] = history_entries[i];
+        }
+        history_entries[MAX_HISTORY - 1] = strdup(cmd);
+    }
+}
+
+int shellforge_history(void) {
+    for (int i = 0; i < history_count; i++) {
+        printf("%4d  %s\n", i + 1, history_entries[i]);
+    }
+    return 1;
+}
+
+void free_history(void) {
+    for (int i = 0; i < history_count; i++) {
+        free(history_entries[i]);
+    }
+}
 
 void handle_sigint(int sig) {
     (void)sig;
@@ -54,7 +85,6 @@ char **tokenize(char *line) {
     return tokens;
 }
 
-// Expands tokens starting with '$' using getenv()
 void expand_variables(char **args) {
     for (int i = 0; args[i] != NULL; i++) {
         if (args[i][0] == '$' && args[i][1] != '\0') {
@@ -195,6 +225,10 @@ int execute_command(char **args) {
         return shellforge_cd(args);
     }
 
+    if (strcmp(args[0], "history") == 0) {
+        return shellforge_history();
+    }
+
     for (int i = 0; args[i] != NULL; i++) {
         if (strcmp(args[i], "|") == 0) {
             args[i] = NULL;
@@ -246,6 +280,12 @@ int main(void) {
             break;
         }
 
+        // Strip newline for history record
+        line[strcspn(line, "\r\n")] = 0;
+        if (strlen(line) > 0) {
+            add_history_entry(line);
+        }
+
         char **args = tokenize(line);
 
         if (args[0] == NULL) {
@@ -263,6 +303,7 @@ int main(void) {
         free(args);
     }
 
+    free_history();
     free(line);
     return 0;
 }
