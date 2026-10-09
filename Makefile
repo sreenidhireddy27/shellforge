@@ -1,18 +1,15 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -g
+CFLAGS = -Wall -Wextra -g -std=gnu11
 
 TARGET = shellforge
-
 SRC = src/main.c
-OBJ = src/main.o
 
 all: $(TARGET)
 
-$(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJ)
-
-src/main.o: src/main.c
-	$(CC) $(CFLAGS) -c src/main.c -o src/main.o
+$(TARGET): $(SRC)
+	$(CC) $(CFLAGS) $(SRC) -o $(TARGET)
 
 clean:
-	rm -f $(OBJ) $(TARGET)
+	rm -f $(TARGET) *.o src/*.o
+
+.PHONY: all clean
