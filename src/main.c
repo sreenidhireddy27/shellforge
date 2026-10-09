@@ -2,11 +2,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #define MAX_TOKENS 64
 #define DELIMITERS " \t\r\n\a"
 
-// Tokenizes an input string into an array of arguments
+// Tokenizes user input line into an argument array
 char **tokenize(char *line) {
     char **tokens = malloc(MAX_TOKENS * sizeof(char *));
     if (!tokens) {
@@ -19,15 +22,35 @@ char **tokenize(char *line) {
 
     while (token != NULL) {
         tokens[position++] = token;
-
         if (position >= MAX_TOKENS - 1) {
             break;
         }
-
         token = strtok(NULL, DELIMITERS);
     }
     tokens[position] = NULL;
     return tokens;
+}
+
+// Spawns a child process to run external programs
+int execute_command(char **args) {
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        // Fork error
+        perror("fork failed");
+        return 1;
+    } else if (pid == 0) {
+        // Child process: execute the binary
+        if (execvp(args[0], args) == -1) {
+            perror("shellforge");
+        }
+        exit(EXIT_FAILURE);
+    } else {
+        // Parent process: wait for child to finish execution
+        int status;
+        waitpid(pid, &status, 0);
+    }
+    return 1;
 }
 
 int main(void) {
@@ -41,32 +64,28 @@ int main(void) {
 
         read_bytes = getline(&line, &len, stdin);
 
-        // Handle Ctrl+D (EOF)
+        // Exit on Ctrl+D (EOF)
         if (read_bytes == -1) {
             printf("\n");
             break;
         }
 
-        // Parse the input into tokens
         char **args = tokenize(line);
 
-        // Empty line entered
+        // Ignore empty input
         if (args[0] == NULL) {
             free(args);
             continue;
         }
 
-        // Check for exit built-in
+        // Built-in exit command
         if (strcmp(args[0], "exit") == 0) {
             free(args);
             break;
         }
 
-        // Print parsed tokens to verify tokenization
-        printf("Tokens parsed:\n");
-        for (int i = 0; args[i] != NULL; i++) {
-            printf("  arg[%d]: %s\n", i, args[i]);
-        }
+        // Execute external command
+        execute_command(args);
 
         free(args);
     }
